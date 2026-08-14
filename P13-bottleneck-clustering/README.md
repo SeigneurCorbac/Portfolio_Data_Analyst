@@ -36,3 +36,9 @@ l'IA.
  
 ## Outils
 Python, pandas, scikit-learn, matplotlib/seaborn, Jupyter
+ 
+## Livrables dans ce dossier
+- p6_extended.ipynb — notebook POC exécuté de bout en bout
+- documentation.md — cahier des charges, veille, démarche complète,
+  pilotage de projet
+- erp.xlsx, web.xlsx, liaison.xlsx — fichiers sources
