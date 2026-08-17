@@ -26,9 +26,17 @@ Le P6 fusionne trois sources (ERP, site web, table de liaison) puis passe en rev
 
 L'environnement est **complexe et évolutif** : le catalogue de BottleNeck change en continu (nouvelles références, arrêts de vente, variations de stock), les données proviennent de trois systèmes distincts (ERP, site web, table de liaison) dont la synchronisation n'est pas garantie — le bug de fusion détecté en §3.1 en est la preuve concrète — et les usages attendus (assortiment, pricing, stock) ont des horizons de décision différents. Le projet doit donc produire un résultat robuste à cette instabilité, pas une photographie figée à usage unique.
 
-### 1.2 Parties prenantes
+### 1.2 Parties prenantes et rôles
 
-Les parties prenantes visées sont les équipes assortiment, pricing et gestion de stock, qui ont besoin de familles de produits actionnables plutôt que de statistiques isolées. Le P6 répond à un besoin de **constat** (« quel est l'état du catalogue ? ») ; le P13 doit répondre à un besoin de **décision** (« comment regrouper les produits pour agir dessus ? »).
+| Partie prenante | Rôle vis-à-vis du projet |
+|---|---|
+| Équipe assortiment | Consommatrice du résultat : utilise les segments pour décider quels produits maintenir, renforcer ou retirer du catalogue |
+| Équipe pricing | Consommatrice du résultat : ajuste les stratégies tarifaires par segment (ex. Premium vs Moteur de CA) |
+| Équipe gestion de stock | Consommatrice prioritaire : agit directement sur le segment "Stock dormant" (déstockage) |
+| Auteur du projet (moi) | Responsable de la fiabilité de l'analyse : audit des données, choix méthodologiques, validation des décisions assistées par l'IA |
+| Formateur/évaluateur P13 | Valide la démarche critique et documentée ; n'est pas un utilisateur final du résultat métier |
+
+Le P6 répond à un besoin de **constat** (« quel est l'état du catalogue ? ») ; le P13 doit répondre à un besoin de **décision** (« comment regrouper les produits pour agir dessus ? »).
 
 ### 1.3 Objectifs & enjeux
 
@@ -71,6 +79,7 @@ L'approche passe d'une lecture variable par variable à une **segmentation multi
 - **Volumétrie** : 689 produits en cœur de catalogue après nettoyage → faible volume, résultats à interpréter comme un **POC**, non déployable en l'état.
 - **Reproductibilité** : résultats stables d'une exécution à l'autre (graine fixée, date d'ancrage figée sur la donnée et non sur la date d'exécution).
 - **Outillage** : Python / pandas / scikit-learn, notebook Jupyter.
+- **Contrainte externe** : les données sources (ERP, web) sont des exports figés d'un instant T, hors du contrôle direct de l'analyste — toute évolution du système d'information de BottleNeck (changement de structure ERP, migration de plateforme e-commerce) casserait le pipeline sans préavis. C'est un argument supplémentaire en faveur de l'industrialisation (validation Pandera, §2.2) pour détecter ce genre de rupture automatiquement plutôt que silencieusement.
 
 ### 1.8 Ressources et budget
 
@@ -146,6 +155,8 @@ Basculer d'une lecture univariée faite à la main (P6) vers une segmentation mu
 | | Great Expectations | Qualité de données en pipeline de production | Multi-moteur, Data Docs lisibles par le métier | Lourd, surdimensionné pour un notebook ponctuel | 100+ dépendances, empreinte disque et temps d'installation nettement supérieurs pour un usage ponctuel — non sobre au regard du besoin réel | Écarté à ce stade (sur-ingénierie disproportionnée par rapport au volume traité) |
 
 **Principe de sobriété appliqué à la décision finale** : sur un volume de 689 produits, l'écart de coût de calcul entre les options est négligeable en valeur absolue — mais le raisonnement de sobriété a été mené comme s'il devait passer à l'échelle (catalogue complet BottleNeck, plusieurs dizaines de milliers de références), ce qui a pesé en faveur de KMeans (linéaire) et de Pandera (léger) plutôt que de solutions plus lourdes mais non nécessaires au besoin actuel.
+
+**Limite assumée sur Pandera** : contrairement à KMeans, testé et comparé chiffres à l'appui dans le notebook (§5-7), Pandera n'a été qu'**identifié** comme piste via la veille — il n'a pas été expérimenté (pas de schéma de validation implémenté dans ce POC). C'est une action volontairement reportée à une itération d'industrialisation future (cf. §4.1, lot L7), documentée comme telle plutôt que présentée à tort comme testée.
 
 ### 2.3 Critères de comparaison
 
@@ -228,6 +239,10 @@ Deux variables explicitement exclues des features :
 | Meilleur k statistique | k=3 (silhouette 0,400) | k=3 (silhouette 0,386) |
 | k=4 testé ? | — | Oui : silhouette 0,375 (écart -0,011 vs k=3) |
 
+![Comparaison des scores de silhouette entre la variante A (3 axes) et la variante B (4 axes), selon le nombre de clusters k](images/silhouette_comparaison.png)
+
+*Lecture du graphique : la variante A domine systématiquement en netteté statistique, mais l'écart avec la variante B se resserre à k=4 (0,400 vs 0,375) — c'est cet écart marginal qui rend l'arbitrage métier possible sans sacrifier excessivement la qualité de séparation.*
+
 **Arbitrage k=3 vs k=4 sur la variante B** : le k optimal au sens strict de la silhouette est 3. Mais à k=4, le plus petit cluster (32 produits) affiche une rotation de stock moyenne de **16,9 mois**, contre 3,0 mois pour l'ensemble du cœur de catalogue — un segment à rotation anormale, invisible à k=3 où il serait dilué dans un groupe plus large. Sa dispersion interne (`describe()` sur le sous-groupe) confirme qu'il ne s'agit pas d'un artefact (pas un point unique isolé).
 
 **Décision** : k=4 retenu pour la variante B malgré la perte marginale de silhouette (-0,011) — l'actionnabilité prime sur la netteté statistique pure, dès lors que le segment supplémentaire est validé comme homogène.
@@ -244,6 +259,10 @@ Deux variables explicitement exclues des features :
 | **Stock dormant** | 32 | Prix 75,7€ · rotation 16,9 mois (6× la moyenne) · marge plus faible (73%) | Déstocker en priorité |
 
 Le segment *Stock dormant* était invisible dans une segmentation prix/ventes/ancienneté seule — c'est l'ajout de la rotation de stock qui le révèle, validant la démarche de comparaison A/B.
+
+![Les 4 segments du catalogue BottleNeck, positionnés selon la rotation de stock et le taux de marge](images/segments_scatter.png)
+
+*Lecture du graphique : le segment "Stock dormant" (en rouge) se détache nettement sur l'axe horizontal (rotation de stock), avec une dispersion propre — ce n'est pas un nuage de points épars, ce qui confirme visuellement qu'il ne s'agit pas d'un artefact isolé.*
 
 ### 3.6 Limites de l'analyse
 
@@ -273,29 +292,31 @@ Le segment *Stock dormant* était invisible dans une segmentation prix/ventes/an
 
 Charge relative : **S** (≤ ½ j), **M** (½–1 j), **L** (> 1 j).
 
-| # | Tâche | Lot | Charge | Dépend de | Definition of Done |
-|---|---|---|---|---|---|
-| T1 | Reformuler le besoin métier | L1 | S | — | Problématique validée |
-| T2 | Comparer méthodes de clustering + outils qualité, sourcer | L2 | M | — | Tableau de veille avec ≥ 2 options/axe |
-| T3 | Auditer `df_final.xlsx` (NaN, doublons, cohérence) | L3 | M | T1 | Bug de fusion identifié et prouvé |
-| T4 | Isoler les lignes corrompues et les invendus | L3 | S | T3 | `coeur` = 689 produits, comptes vérifiés |
-| T5 | Feature engineering + pré-traitement (log/scale justifiés) | L4 | M | T4 | 0 NaN dans les features, transfos argumentées |
-| T6 | Variante A : silhouette + comparaison KMeans/Agglomératif | L4 | M | T5 | k justifié |
-| T7 | Variante B : idem + arbitrage k=3 vs k=4 | L4 | M | T6 | Décision tracée (statistique vs métier) |
-| T8 | Arbitrer entre variantes A et B | L5 | S | T6, T7 | Décision documentée |
-| T9 | Valider l'homogénéité du segment "Stock dormant" | L5 | S | T8 | Dispersion vérifiée, non-artefact |
-| T10 | Nommer les segments + recommandations | L6 | M | T9 | 4 segments nommés, 1 reco/segment |
-| T11 | Documentation de la démarche (ce document) | L6 | L | tous | Doc complète, reproductible |
+| # | Tâche | Lot | Charge | Dépend de | Date cible | Definition of Done |
+|---|---|---|---|---|---|---|
+| T1 | Reformuler le besoin métier | L1 | S | — | 03/08/2026 | Problématique validée |
+| T2 | Comparer méthodes de clustering + outils qualité, sourcer | L2 | M | — | 04/08/2026 | Tableau de veille avec ≥ 2 options/axe |
+| T3 | Auditer `df_final.xlsx` (NaN, doublons, cohérence) | L3 | M | T1 | 05/08/2026 | Bug de fusion identifié et prouvé |
+| T4 | Isoler les lignes corrompues et les invendus | L3 | S | T3 | 05/08/2026 | `coeur` = 689 produits, comptes vérifiés |
+| T5 | Feature engineering + pré-traitement (log/scale justifiés) | L4 | M | T4 | 06/08/2026 | 0 NaN dans les features, transfos argumentées |
+| T6 | Variante A : silhouette + comparaison KMeans/Agglomératif | L4 | M | T5 | 06/08/2026 | k justifié |
+| T7 | Variante B : idem + arbitrage k=3 vs k=4 | L4 | M | T6 | 07/08/2026 | Décision tracée (statistique vs métier) |
+| T8 | Arbitrer entre variantes A et B | L5 | S | T6, T7 | 07/08/2026 | Décision documentée |
+| T9 | Valider l'homogénéité du segment "Stock dormant" | L5 | S | T8 | 07/08/2026 | Dispersion vérifiée, non-artefact |
+| T10 | Nommer les segments + recommandations | L6 | M | T9 | 08/08/2026 | 4 segments nommés, 1 reco/segment |
+| T11 | Documentation de la démarche (ce document) | L6 | L | tous | 08-14/08/2026 | Doc complète, reproductible |
 
 ### 4.3 Planning & jalons
 
-| Jalon | Contenu | Critère de passage |
-|---|---|---|
-| **J1 — Cadrage validé** | L1 + L2 | Problématique + veille arrêtées |
-| **J2 — Données auditées** | L3 | Bug de fusion isolé, `coeur` propre |
-| **J3 — Modèle v1 (baseline)** | L4 variante A | Segmentation 3 axes obtenue |
-| **J4 — Modèle v2 + arbitrage** | L4 variante B + L5 | Décision k=4 tranchée et validée |
-| **J5 — Restitution** | L6 | Segments nommés, doc déposable |
+| Jalon | Date cible | Contenu | Critère de passage |
+|---|---|---|---|
+| **J1 — Cadrage validé** | 04/08/2026 | L1 + L2 | Problématique + veille arrêtées |
+| **J2 — Données auditées** | 05/08/2026 | L3 | Bug de fusion isolé, `coeur` propre |
+| **J3 — Modèle v1 (baseline)** | 06/08/2026 | L4 variante A | Segmentation 3 axes obtenue |
+| **J4 — Modèle v2 + arbitrage** | 07/08/2026 | L4 variante B + L5 | Décision k=4 tranchée et validée |
+| **J5 — Restitution** | 14/08/2026 | L6 | Segments nommés, doc déposable |
+
+**Marge de sécurité** : 6 jours entre J4 (arbitrage technique bouclé) et J5 (échéance finale) — volontairement large pour absorber un imprévu (c'est ce créneau qui a permis d'intégrer la refusion à la source une fois les fichiers obtenus, sans décaler l'échéance finale).
 
 ### 4.4 Points de contrôle
 
